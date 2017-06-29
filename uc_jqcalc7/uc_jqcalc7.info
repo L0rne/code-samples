@@ -1,0 +1,5 @@
+name = Jquery Product Calculator Drupal 7
+description = Extends uc_attribute to work with a custom quantity discount scheme.
+dependencies[] = uc_attribute
+package = Ubercart - extra
+core = 7.x
