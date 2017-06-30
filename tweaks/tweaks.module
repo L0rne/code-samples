@@ -1,0 +1,900 @@
+<?php
+
+/**
+ * @file
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function tweaks_menu() {
+  $items = array();
+
+  $items['user/%user/orders2/%uc_order/print'] = array(
+    'title' => 'Print invoice',
+    'description' => 'Print order invoice.',
+    'page callback' => 'tweaks_view_invoice',
+    'page arguments' => array(3, "customer2", TRUE),
+    'access callback' => 'uc_order_can_view_order',
+    'access arguments' => array(1, 3, TRUE),
+  );
+
+  $items['user/%user/orders3/%uc_order/print'] = array(
+    'title' => 'Print invoice',
+    'description' => 'Print order invoice.',
+    'page callback' => 'tweaks_view_invoice',
+    'page arguments' => array(3, "customer3", TRUE),
+    'access callback' => 'uc_order_can_view_order',
+    'access arguments' => array(1, 3, TRUE),
+  );
+  $items['user/%user/orders4/%uc_order/print'] = array(
+    'title' => 'Print invoice',
+    'description' => 'Print order invoice.',
+    'page callback' => 'tweaks_view_invoice',
+    'page arguments' => array(3, "customer4", TRUE),
+    'access callback' => 'uc_order_can_view_order',
+    'access arguments' => array(1, 3, TRUE),
+  );
+  $items['user/%user/orders-email/%uc_order/print'] = array(
+    'title' => 'Print invoice',
+    'description' => 'Print order invoice.',
+    'page callback' => 'tweaks_view_invoice',
+    'page arguments' => array(3, "customer-email", TRUE),
+    'access callback' => 'uc_order_can_view_order',
+    'access arguments' => array(1, 3, TRUE),
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_admin_paths_alter().
+ * 
+ *  Keep node add and edit pages from using overlay.
+ */
+function tweaks_admin_paths_alter(&$paths) {
+  $paths['node/*/edit'] = FALSE;
+  $paths['node/add'] = FALSE;
+  $paths['node/add/*'] = FALSE;
+}
+
+/**
+ * Implements hook_uc_order()
+ *
+ * When an order is created, update balance tracker and
+ * add price and order number to the purchased node
+ */
+function tweaks_uc_order($op, &$order, $arg2) {
+  // dpm($arg2, "arg2");.
+  global $user;
+  switch ($op) {
+    case 'update':
+      // We will add the money to the account only 
+      // until the order is updated to "completed"
+      // This way we are sure everything's ok with the order.
+      // dpm($order, "order");
+      // dpm($arg2, "arg2");.
+      if ($arg2 == 'pending') {
+        $order_link = l("Order # " . $order->order_id, "user/" . $user->uid . "/orders/" . $order->order_id);
+        $is_routine = FALSE;
+        // dpm($order, "order");.
+        foreach ($order->products as $key => $value) {
+          // dpm($value, "product");
+          // see if we're dealing with a.
+          if ($value->model == 'Routine') {
+            $is_routine = TRUE;
+            $uid = $value->order_uid;
+            // $title = $value->title;.
+            $qty = $value->qty;
+            $routine_nid = $value->data['node_checkout_nid'];
+            $routine = node_load($routine_nid);
+            // dpm($routine, "routine");.
+            $routine_title = $routine->title;
+            $routine_title_link = l($routine->title, "node/" . $routine_nid);
+            $routine_event_nid = $routine->field_event[LANGUAGE_NONE][0]['nid'];
+            $event = node_load($routine_event_nid);
+            // dpm($event, "event");
+            // $event_title = $event->title;.
+            $event_link = l($event->title, "node/" . $routine_event_nid);
+            $product_sum = $value->qty * $value->price;
+            $message = $order_link . ", Routine \"" . $routine_title_link . "\" with " . $qty . " dancers for $event_link.";
+            // Unpaid, so add debit ammount to the balance sheet.
+            if (module_exists('balance_tracker')) {
+              balance_tracker_debit_account($uid, $product_sum, $routine_event_nid, array('message' => t($message)));
+            }
+            // Set "Price"
+            // set "Order #"  Right now this is an interger 
+            // field, but maybe it should be a node reference field?
+            $node_wrapper = entity_metadata_wrapper('node', $routine);
+            $node_wrapper->field_price->set($product_sum);
+            $node_wrapper->field_order_number->set($order->order_id);
+            $node_wrapper->save();
+          }
+        }
+
+      }
+      elseif ($arg2 == 'completed') {
+        // dpm($arg2, "arg2");.
+        $order_link = l("Order # " . $order->order_id, "user/" . $user->uid . "/orders/" . $order->order_id);
+        $is_payment = FALSE;
+        // dpm($order, "completed order code was hit");.
+        foreach ($order->products as $key => $value) {
+          // dpm($value, "product");
+          // see if we're dealing with a.
+          if ($value->model == 'Routine') {
+            $is_routine = TRUE;
+            $uid = $value->order_uid;
+            // $title = $value->title;.
+            $qty = $value->qty;
+            $routine_nid = $value->data['node_checkout_nid'];
+            $routine = node_load($routine_nid);
+            // dpm($routine, "processing routine");.
+            $routine_title = $routine->title;
+            $routine_title_link = l($routine->title, "node/" . $routine_nid);
+            $routine_event_nid = $routine->field_event[LANGUAGE_NONE][0]['nid'];
+            $event = node_load($routine_event_nid);
+            // dpm($event, "event");
+            // $event_title = $event->title;.
+            $event_link = l($event->title, "node/" . $routine_event_nid);
+            $product_sum = $value->qty * $value->price;
+            $message = $order_link . ", Payment made for routine \"" . $routine_title_link . "\" with " . $qty . " dancers for $event_link.";
+            // Add payment credit to the balance sheet.
+            if (module_exists('balance_tracker')) {
+              // balance_tracker_debit_account($uid, $product_sum, $routine_event_nid, array('message'=>t($message)));
+              balance_tracker_credit_account($uid, $product_sum, $routine_event_nid, array('message' => t($message)));
+            }
+            // Set "Paid" flag on the Routine node.
+            $node_wrapper = entity_metadata_wrapper('node', $routine);
+            $node_wrapper->field_paid->set(1);
+            $node_wrapper->save();
+
+          }
+
+        }
+
+      }
+      break;
+  }
+}
+
+
+
+/**
+ * Taken from content_type_extras module.
+ */
+function tweaks_change_button_type($markup, $element) {
+  $markup = str_replace('type="submit', 'type="button', $markup);
+  return $markup;
+}
+
+/**
+ * Implements hook_form_alter().
+ */
+function tweaks_form_alter(&$form, &$form_state, $form_id) {
+  // dpm($form_id, "form_id");
+  // dpm($form, "form");
+  // dpm($form_state, "form_state from tweaks_form_alter - $form_id");.
+  if ($form_id == 'uc_payafter_checkout_form') {
+    // dpm($form_id, "form_id");
+    // dpm($form, "form");
+    // dpm($form_state, "form_state");.
+    if (variable_get('uc_optional_checkout_review', FALSE)) {
+      $form['#submit'][] = 'tweaks_uc_payafter_checkout_form';
+      $form['actions']['continue']['#value'] = t('Submit order');
+    }
+    // dpm($form, "form after");.
+  }
+
+  // Stuff from uc_node_checkout.
+  // hijacked here because of extreme modification.
+  // Alter the cart view form to change node checkout product titles into edit
+  // links for the nodes they reference.
+  if ($form_id == 'uc_cart_view_form') {
+
+    // dpm($form_id, "form_id");
+    // dpm($form, "form");
+    // dpm($form_state, "form_state");.
+    drupal_add_js(drupal_get_path('module', 'tweaks') . '/js/tweaks.add_routine_button.js');
+    $form['actions']['add_routine'] = array(
+      '#type'        => 'button',
+      '#value'       => t('ADD ROUTINE'),
+    // We want this at the end of whatever buttons are showing.
+      '#weight'      => -100,
+      '#post_render' => array('tweaks_change_button_type'),
+    );
+
+    drupal_add_js(drupal_get_path('module', 'tweaks') . '/js/tweaks.studio_console_button.js');
+    $form['actions']['studio_console'] = array(
+      '#type'        => 'button',
+      '#value'       => t('BACK TO STUDIO CONSOLE'),
+    // We want this at the end of whatever buttons are showing.
+      '#weight'      => -100,
+      '#post_render' => array('tweaks_change_button_type'),
+    );
+
+    // Payments.
+    if ($form["items"][0]["nid"]['#value'] == 267) {
+      // Remove qty from the table
+      // unset($form['items']['#columns']['qty']);.
+      $items = uc_cart_get_contents();
+      // dpm($items, "items from uc_node_checkout_form_alter");.
+      $i = 0;
+
+      // Check for any items being removed from the cart.
+      $deleted_items = array();
+      if (!empty($form_state['post'])) {
+        foreach (array_keys($form_state['post']) as $key) {
+          if (substr($key, 0, 7) === 'remove-') {
+            $deleted_items[] = (int) substr($key, 7);
+          }
+        }
+      }
+      // dpm($deleted_items, "deleted items");.
+    }
+
+    // Routines.
+    if ($form["items"][0]["nid"]['#value'] == 394) {
+      // dpm($form["items"][0]["nid"]['#value'], "product nid");
+      // Change the cart form table
+      // $form['items']['#columns']['info'] = $form['items']['#columns']['desc'];
+      // $form['items']['#columns']['info']['cell'] = "Info";
+      // shuffle the columns around
+      // $form['items']['#columns']['desc']['weight'] = 7;
+      // $form['items']['#columns']['info']['weight'] = 8;
+      // $form['items']['#columns']['qty']['weight'] = 9;
+      // $form['items']['#columns']['total']['weight'] = 10;
+      // dpm($form['items'], "form items");.
+      $items = uc_cart_get_contents();
+
+      // dpm($items, "items from uc_node_checkout_form_alter");.
+      $i = 0;
+
+      // Check for any items being removed from the cart.
+      $deleted_items = array();
+      if (!empty($form_state['post'])) {
+        foreach (array_keys($form_state['post']) as $key) {
+          if (substr($key, 0, 7) === 'remove-') {
+            $deleted_items[] = (int) substr($key, 7);
+          }
+        }
+      }
+      // dpm($deleted_items, "deleted items");
+      // Update the item display (quantity, title, click to edit)
+      $j = 0;
+      foreach ($items as $i => $item) {
+        // dpm($item, "item");
+        // dpm($item->data['node_checkout_nid'], "node_checkout_nid");
+        // dpm($j, "j");
+        // dpm($i, "i");.
+        if (isset($item->data['node_checkout_nid'])) {
+          $node = node_load($item->data['node_checkout_nid']);
+
+          // Update the item being checked out.
+          uc_node_checkout_update_content_fields($item, $node);
+
+          // Update the title if configured based on user access.
+          if (variable_get('uc_node_checkout_cart_titles', TRUE) ||
+                variable_get('uc_node_checkout_click_to_edit', TRUE)) {
+            if (!in_array($i, $deleted_items) && node_access('update', $node)) {
+              if (variable_get('uc_node_checkout_cart_titles', TRUE)) {
+                $title = l($node->title, 'node/' . $node->nid . '/edit', array('query' => array('destination' => 'cart')));
+                // $click = t('(click to edit)');.
+                $click = NULL;
+                // dpm($node, "node");.
+              }
+              else {
+                $title = $form['items'][$j]['title']['#markup'];
+                $click = ' - ' . l(t('edit'), 'node/' . $node->nid . '/edit', array('query' => array('destination' => 'cart')));
+              }
+
+              // Add the click to edit link to the title if necessary.
+              if (variable_get('uc_node_checkout_click_to_edit', TRUE)) {
+                $title .= ' ' . theme('uc_cart_click_to_edit', array('link' => $click));
+              }
+            }
+            else {
+              $title = check_plain($item->title);
+            }
+
+            $form['items'][$j]['title']['#markup'] = $title;
+
+          }
+
+          // Add the node cart teaser beneath the title if necessary.
+          if (variable_get('uc_node_cart_teaser', TRUE)) {
+            if (variable_get('uc_node_order_product_teaser_override', FALSE)) {
+              $list = array(
+                token_replace(variable_get('uc_node_order_product_attribute', 'ID'), array('node' => $node)) . ': '
+                . token_replace(variable_get('uc_node_order_product_option', '[product:nid] - [product:title]'), array('node' => $node)),
+              );
+              $teaser = theme('item_list', $list, NULL, 'ul', array('class' => 'uc-node-cart-teaser'));
+            }
+            else {
+              $teaser = theme('uc_node_cart_teaser', array('node' => $node));
+            }
+
+            $form['items'][$j]['description']['#markup'] .= $teaser;
+          }
+
+          // Gather data for info column.
+          $event = node_load($node->field_event[LANGUAGE_NONE][0]['nid']);
+          $dancers_array = $node->field_dancers[LANGUAGE_NONE];
+          $dancers_num = count($dancers_array);
+          $dancers_list = '<ul class="cart-product-info-list-dancers">';
+          $dancers_ages = array();
+          $dancers_divisions = array();
+          $dancers_levels = array();
+          $price_per_dancer = money_format('%i', $item->price);
+          foreach ($dancers_array as $dancer_nid) {
+            $dancer_node = node_load($dancer_nid['nid']);
+            // dpm($dancer_node, "dancer_node");.
+            $dancers_list .= "<li>$dancer_node->title</li>";
+            $dancers_ages[] = $dancer_node->field_age1[LANGUAGE_NONE][0]['value'];
+            $dancers_levels[] = $dancer_node->field_level[LANGUAGE_NONE][0]['value'];
+          }
+          $dancers_list .= '</ul>';
+          // don't yet know the algorythm for determining ages and levels
+          // dpm($dancers_ages, "dancer ages");
+          // dpm($dancers_levels, "dancer levels");.
+          $level = $node->field_avg_dancer_level_computed[LANGUAGE_NONE][0]['value'];
+          $avg_age = $node->field_avg_dancer_age_computed[LANGUAGE_NONE][0]['value'];
+          $age_div = $node->field_age_division_computed[LANGUAGE_NONE][0]['value'];
+
+          // Add data to info column
+          // $form['items'][$j]['info'] = $form['items'][$j]['desc'];
+          // $form['items'][$j]['info']['#cell_attributes']['class'][0] = "info";.
+          $info = "<ul class=\"cart-product-info-list\"><li>Event: $event->title</li>";
+          $info .= "<li>Price per Dancer: \$$price_per_dancer</li>";
+          $info .= "<li>Level: $level</li>";
+          $info .= "<li>Avg Age: $avg_age</li>";
+          $info .= "<li>Age Division: $age_div</li>";
+          $info .= "<li>Dancers ($dancers_num): $dancers_list</li>";
+          $info .= "</ul>";
+
+          // Rebuild the description from the title and options.
+          $form['items'][$j]['desc']['#markup'] = $form['items'][$j]['title']['#markup'] . $form['items'][$j]['description']['#markup'] . $info;
+
+          // Seeing as the quantity is passsed in and 
+          // should not be changed at this stage, disable.
+          $form['items'][$j]['qty']['#value'] = $form['items'][$j]['qty']['#default_value'];
+          $form['items'][$j]['qty']['#type'] = 'value';
+          $form['items'][$j]['qty']['#theme'] = 'uc_node_checkout_restrict_cart_qty_field';
+        }
+        // $i++;.
+        $j++;
+      }
+
+    }
+
+  }
+
+  if ($form_id == 'node_registration_form') {
+    $form['#submit'][] = 'tweaks_node_registration_form_submit';
+    // dpm($form, "form");.
+  }
+
+  if ($form_id == 'node_registration_cancel_confirm') {
+    // Changing the redirect for the "cancel" button is easy, 
+    // because this button is #type link.
+    $form['actions']['cancel']['#href'] = "/tour-dates";
+    // A little more complicated for the submit button (reads "Cancel Registration")
+    $form['#submit'][] = 'tweaks_node_registration_cancel_confirm_form_submit';
+
+    // dpm($form_id, "form_id");
+    // dpm($form, "form");
+    // dpm($form_state, "form_state");.
+  }
+
+  if ($form_id == 'uc_cart_checkout_form') {
+
+    // $form['actions']['continue']['#submit'][] = 'tweaks_uc_cart_checkout_form_submit'; // this makes the system skip the order confirmation page.  commented it out to return to normal operation.
+    // dpm($form['actions']['continue'], "checkout after");.
+    $form['actions']['continue']['#attributes'] = array('onclick' => "if(confirm('Are you sure you are ready to complete your registration?')) return true; return false;");
+    // dpm($form, "form");.
+  }
+
+  if ($form_id == 'teacher_node_form') {
+    // dpm($form['actions']);.
+    $form['actions']['cancel'] = array();
+    drupal_add_js(drupal_get_path('module', 'tweaks') . '/js/tweaks.cancel_button_teacher.js');
+    $form['actions']['cancel_tweaks'] = array(
+      '#type'        => 'button',
+      '#value'       => t('Back to Teachers'),
+    // We want this at the end of whatever buttons are showing.
+      '#weight'      => 100,
+      '#post_render' => array('tweaks_change_button_type'),
+    );
+    drupal_add_js(drupal_get_path('module', 'tweaks') . '/js/tweaks.console_button.js');
+    $form['actions']['cancel_console'] = array(
+      '#type'        => 'button',
+      '#value'       => t('Back to Studio Console'),
+    // We want this at the end of whatever buttons are showing.
+      '#weight'      => 101,
+      '#post_render' => array('tweaks_change_button_type'),
+    );
+
+  }
+
+  if ($form_id == 'amp_routine_node_form') {
+    // dpm($form['actions']);
+    // dpm($form, "form");
+    // dpm($form_state, "form_state");
+    // dpm($form['field_music'], "field_music");
+    // $form['field_music']['#suffix'] = "testing";
+    // drupal_add_js(drupal_get_path('module', 'content_type_extras') . '/js/content_type_extras.cancel_button.js');
+    // Remove ajax from select field.
+    $form['attributes'][1]["#ajax"]["callback"] = NULL;
+    $form['attributes'][2]["#ajax"]["callback"] = NULL;
+
+    // Add custom form validation.
+    $form['#validate'][] = 'tweaks_routine_validate';
+
+    // If enabled, alter the submit button to say "Add to cart".
+    if (variable_get('uc_node_checkout_alter_node_submit_button', TRUE)) {
+      $form['actions']['submit']['#value'] = t('Save and Check Out');
+      $form['actions']['submit']['#submit'][] = 'tweaks_node_form_save_and_check_out';
+      // dpm($form['actions'], "actions");.
+    }
+
+    $form['actions']['save'] = $form['actions']['submit'];
+    $form['actions']['save']['#value'] = t('Save');
+    $form['actions']['save']['#weight'] = -100;
+    $form['actions']['save']['#submit'][] = 'tweaks_node_form_submit';
+    // dpm($form['actions']['save'], "save button");.
+    $form['actions']['cancel'] = array();
+    drupal_add_js(drupal_get_path('module', 'tweaks') . '/js/tweaks.cancel_button_routine.js');
+    $form['actions']['cancel_tweaks'] = array(
+      '#type'        => 'button',
+      '#value'       => t('Back to Routines'),
+    // We want this at the end of whatever buttons are showing.
+      '#weight'      => 100,
+      '#post_render' => array('tweaks_change_button_type'),
+    );
+    drupal_add_js(drupal_get_path('module', 'tweaks') . '/js/tweaks.console_button.js');
+    $form['actions']['cancel_console'] = array(
+      '#type'        => 'button',
+      '#value'       => t('Back to Studio Console'),
+    // We want this at the end of whatever buttons are showing.
+      '#weight'      => 101,
+      '#post_render' => array('tweaks_change_button_type'),
+    );
+    drupal_add_js(drupal_get_path('module', 'tweaks') . '/js/tweaks.dancers_button.js');
+    $form['actions']['cancel_dancers'] = array(
+      '#type'        => 'button',
+      '#value'       => t('GO TO DANCERS'),
+    // We want this at the end of whatever buttons are showing.
+      '#weight'      => 101,
+      '#post_render' => array('tweaks_change_button_type'),
+    );
+  }
+
+  if ($form_id == 'dancer_node_form') {
+    // dpm($form_id);
+    // dpm($form['actions']);
+    // drupal_add_js(drupal_get_path('module', 'content_type_extras') . '/js/content_type_extras.cancel_button.js');.
+    $form['actions']['cancel'] = array();
+    drupal_add_js(drupal_get_path('module', 'tweaks') . '/js/tweaks.cancel_button_dancer.js');
+    $form['actions']['cancel_tweaks'] = array(
+      '#type'        => 'button',
+      '#value'       => t('Back to Dancers'),
+    // We want this at the end of whatever buttons are showing.
+      '#weight'      => 100,
+      '#post_render' => array('tweaks_change_button_type'),
+    );
+    drupal_add_js(drupal_get_path('module', 'tweaks') . '/js/tweaks.console_button.js');
+    $form['actions']['cancel_console'] = array(
+      '#type'        => 'button',
+      '#value'       => t('Back to Studio Console'),
+    // We want this at the end of whatever buttons are showing.
+      '#weight'      => 101,
+      '#post_render' => array('tweaks_change_button_type'),
+    );
+    drupal_add_js(drupal_get_path('module', 'tweaks') . '/js/tweaks.routines_button.js');
+    $form['actions']['cancel_routines'] = array(
+      '#type'        => 'button',
+      '#value'       => t('GO TO ROUTINES'),
+    // We want this at the end of whatever buttons are showing.
+      '#weight'      => 101,
+      '#post_render' => array('tweaks_change_button_type'),
+    );
+
+  }
+
+  // dpm($form_id, "form_id");
+  // dpm($form, "form");
+  // dpm($form_state, "form_state");.
+}
+
+/**
+ * Validate sumbission form for Routine node type
+ */
+function tweaks_routine_validate($form, &$form_state) {
+  // dpm($form, "form");
+  // dpm($form_state, "form_state");
+  // dpm($form_state['values'], "form state values from tweaks_routine_validate");
+  // dpm($form_state['values']['ucnc_product_nid'], "ucnc_product_nid");
+  // Only works to validate /add form, not /edit
+  // so this first bit is for the /add form
+  // I also need this validation to work with /edit before order submission
+  // and ucnc_product_nid, which I was checking for, does not exist on /edit
+  // so... check for attribute on the form?
+  // changed from $form_state['values']['ucnc_product_nid'].
+  if (isset($form_state['values']['attributes'][1])) {
+    // dpm($form, "form attributes");
+    // dpm($form_state, "form_state");
+    // dpm($ucnc_product_nid, "ucnc_product_nid from tweaks_routine_validate");.
+    $dancers_array = $form_state['values']['field_dancers'][LANGUAGE_NONE];
+    $dancers_count = count($dancers_array);
+    // $ucnc_product_nid = $form_state['values']['ucnc_product_nid'];.
+    $entry_type = $form_state['values']['attributes'][1];
+    $extra_time = $form_state['values']['attributes'][2];
+
+    // dpm($entry_type, "entry_type from tweaks_routine_validate");
+    // dpm($extra_time, "extra_time from tweaks_routine_validate");
+    // dpm($dancers_array, "dancers array");.
+    if ($dancers_array[0]['nid'] == NULL) {
+      form_set_error('field_dancers', t('At least one Dancer must be selected.'));
+      $dancers_count = 0;
+    }
+    else {
+      $dancers_count = count($dancers_array);
+    }
+
+    // dpm($dancers, "dancers from tweaks_routine_validate");
+    // $cart_items =  uc_cart_get_contents();
+    // if ($cart_items) {
+    // $cart_link = l("My Cart", "/cart");
+    // form_set_error('title', t('Your cart already contains an item.  Please complete that transaction, first. ' . $cart_link));
+    // }.
+    switch ($entry_type) {
+      // 1 = 1 dancers.
+      case 1:
+        if ($extra_time != 10) {
+          form_set_error('attributes', t('Extra time may only be added to Group, Super Line or Production routines.'));
+        }
+        if ($dancers_count != 1) {
+          form_set_error('field_dancers', t('A single dancer must be selected.'));
+        }
+        break;
+
+      // 2 = 2-3 dancers.
+      case 2:
+        if ($extra_time != 10) {
+          form_set_error('field_title', t('Extra time may only be added to Group, Super Line or Production routines.'));
+        }
+        if ($dancers_count < 2 || $dancers_count > 3) {
+          form_set_error('field_dancers', t('The number of dancers selected must be between 2 and 3.'));
+        }
+        break;
+
+      // 3 = 4-9 dancers.
+      case 3:
+        if ($dancers_count < 4 || $dancers_count > 9) {
+          form_set_error('field_dancers', t('The number of dancers selected must be between 4 and 9.'));
+        }
+        break;
+
+      // 4 = 10-17 dancers.
+      case 4:
+        if ($dancers_count < 10 || $dancers_count > 17) {
+          form_set_error('field_dancers', t('The number of dancers selected must be between 10 and 17.'));
+        }
+        break;
+
+      // 5 = 18-24 dancers.
+      case 5:
+        if ($dancers_count < 18 || $dancers_count > 24) {
+          form_set_error('field_dancers', t('The number of dancers selected must be between 18 and 24.'));
+        }
+        break;
+
+      // 6 = 25+ dancers.
+      case 6:
+        if ($dancers_count < 25) {
+          form_set_error('field_dancers', t('25 or more Dancers must be selected.'));
+        }
+        break;
+    }
+
+  }
+  else {
+    // Here have validation values for the edit form
+    // dpm($form, "form no attributes (edit form>?");
+    // dpm($form_state, "form_state");.
+    $dancers_array_saved = $form['#node']->field_dancers[LANGUAGE_NONE];
+    $dancers_saved = count($dancers_array_saved);
+    $dancers_array = $form_state['values']['field_dancers'][LANGUAGE_NONE];
+    $dancers_count = count($dancers_array);
+
+    $override = FALSE;
+
+    if (isset($form_state['values']['field_category_override'][LANGUAGE_NONE][0]['value'])) {
+      $entry_type = $form_state['values']['field_category_override'][LANGUAGE_NONE][0]['value'];
+      $override = TRUE;
+
+    }
+    else {
+      $entry_type_string = $form_state['values']['field_category_computed'][LANGUAGE_NONE][0]['value'];
+      // Convert string back to interger.
+      switch ($entry_type_string) {
+        // 1 = 1 dancers.
+        case "Solo":
+          $entry_type = 1;
+          break;
+
+        // 2 = 2-3 dancers.
+        case "Duet / Trio":
+          $entry_type = 2;
+          break;
+
+        // 3 = 4-9 dancers.
+        case "Small Group (4-9 Dancers)":
+          $entry_type = 3;
+          break;
+
+        // 4 = 10-17 dancers.
+        case "Large Group (10-17 dancers)":
+          $entry_type = 4;
+          break;
+
+        // 5 = 18-24 dancers.
+        case "Super Line (18-24 Dancers)":
+          $entry_type = 5;
+          break;
+
+        // 6 = 25+ dancers.
+        case "Production Group (25+ dancers)":
+          $entry_type = 6;
+          break;
+      }
+
+    }
+
+    if (isset($form_state['values']['field_extra_time_override'][LANGUAGE_NONE][0]['value'])) {
+      $extra_time = $form_state['values']['field_extra_time_override'][LANGUAGE_NONE][0]['value'];
+      // dpm($form_state['values']['field_extra_time_override'], "extra time override");.
+    }
+    else {
+      $extra_time_string = $form_state['values']['field_extra_time_computed'][LANGUAGE_NONE][0]['value'];
+      // dpm($extra_time_string, "extra time string computed");.
+      switch ($extra_time_string) {
+        // 10 = None.
+        case "None":
+          $extra_time = 10;
+          break;
+
+        // 7 = 1 Minute.
+        case "1 Minute":
+          $extra_time = 7;
+          break;
+
+        // 8 = 2 Minutes.
+        case "2 Minutes":
+          $extra_time = 8;
+          break;
+
+        // 9 = 3 Minutes.
+        case "3 Minutes":
+          $extra_time = 9;
+          break;
+      }
+    }
+
+    // dpm($entry_type, "entry_type from tweaks_routine_validate");
+    // dpm($extra_time, "extra_time from tweaks_routine_validate");
+    // dpm($dancers_array_saved, "dancers_array_saved");
+    // dpm($dancers_saved, "dancers_saved");
+    // dpm($dancers_array, "dancers_array");
+    // dpm($dancers, "dancers");
+    // dpm($override, "override");.
+    if (!$override) {
+      // The number of dancers set in the form must equal 
+      // the number of dancers originaly saved.
+      if ($dancers_count != $dancers_saved) {
+        form_set_error('field_dancers', t('You must have @dancers_saved dancers in this routine.  Please contact AMP to make this change.', array('@dancers_saved' => $dancers_saved));
+      }
+    }
+
+    switch ($entry_type) {
+      // 1 = 1 dancers.
+      case 1:
+        if ($extra_time != 10) {
+          form_set_error('attributes', t('Extra time may only be added to Group, Super Line or Production routines.'));
+        }
+        if ($dancers_count != 1) {
+          form_set_error('field_dancers', t('A single dancer must be selected.'));
+        }
+        break;
+
+      // 2 = 2-3 dancers.
+      case 2:
+        if ($extra_time != 10) {
+          form_set_error('field_title', t('Extra time may only be added to Group, Super Line or Production routines.'));
+        }
+        if ($dancers_count < 2 || $dancers_count > 3) {
+          form_set_error('field_dancers', t('The number of dancers selected must be between 2 and 3.'));
+        }
+        break;
+
+      // 3 = 4-9 dancers.
+      case 3:
+        if ($dancers_count < 4 || $dancers_count > 9) {
+          form_set_error('field_dancers', t('The number of dancers selected must be between 4 and 9.'));
+        }
+        break;
+
+      // 4 = 10-17 dancers.
+      case 4:
+        if ($dancers_count < 10 || $dancers_count > 17) {
+          form_set_error('field_dancers', t('The number of dancers selected must be between 10 and 17.'));
+        }
+        break;
+
+      // 5 = 18-24 dancers.
+      case 5:
+        if ($dancers_count < 18 || $dancers_count > 24) {
+          form_set_error('field_dancers', t('The number of dancers selected must be between 18 and 24.'));
+        }
+        break;
+
+      // 6 = 25+ dancers.
+      case 6:
+        if ($dancers_count < 25) {
+          form_set_error('field_dancers', t('25 or more Dancers must be selected.'));
+        }
+        break;
+    }
+
+  }
+}
+
+/**
+ * Submit handler for node checkout associated content types.
+ */
+function tweaks_node_form_submit(&$form, &$form_state) {
+  $form_state['redirect'] = "studio/routines";
+  // $form_state['redirect'] = "http://google.com";
+  // dpm($form_state, "form_state from tweaks_node_form_submit");.
+}
+
+/**
+ * Submit handler for node checkout associated content types.
+ *
+ * Force redirect to cart when "Save and Check Out" button is used
+ * on Routine add/edit form.
+ */
+function tweaks_node_form_save_and_check_out(&$form, &$form_state) {
+  $form_state['redirect'] = "cart";
+  // $form_state['redirect'] = "http://google.com";
+  // dpm($form_state, "form_state from tweaks_node_form_submit");.
+}
+
+/**
+ * Submit handler to redirect to studio console after node registration.
+ */
+function tweaks_node_registration_form_submit(&$form, &$form_state) {
+  $form_state['redirect'] = "studio/console";
+}
+
+/**
+ * Submit handler to redirect to studio console after event registration.
+ */
+function tweaks_node_registration_cancel_confirm_form_submit(&$form, &$form_state) {
+  $form_state['redirect'] = "studio/console";
+}
+
+/**
+ * Submit handler to redirect to studio console after event registration.
+ */
+function tweaks_uc_cart_checkout_form_submit(&$form, &$form_state) {
+  // $form_state['redirect'] = "studio/console";.
+}
+
+/**
+ * Submit handler to integrate uc_optional_checkout_review and and uc_payafter.
+ */
+function tweaks_uc_payafter_checkout_form(&$form, &$form_state) {
+  // $form_state['redirect'] = "studio/console";
+  // dpm($form['#form_id'], "form id in tweaks_uc_payafter_checkout_form");.
+  drupal_set_message(t("uc_optional_checkout_review_uc_cart_checkout_form_submit hit"));
+  if (variable_get('uc_optional_checkout_review', FALSE)) {
+    $order = $form_state['storage']['order'];
+    // $submit_form = 'uc_payafter_checkout_review_form';.
+    $submit_form = 'uc_cart_checkout_review_form';
+
+    // $submit_form = 'tweaks_checkout_review_form';
+    // $submit_form = 'uc_cart_checkout_review_form';
+    // dpm($form_state['redirect'], "redirect before");.
+    drupal_set_message($form_state['redirect']);
+    unset($_SESSION['uc_checkout'][$order->order_id]['do_review']);
+    $_SESSION['uc_checkout'][$order->order_id]['do_complete'] = TRUE;
+    $form_state['redirect'] = $form_state['storage']['base_path'] . '/pay/complete';
+    // dpm($form_state['redirect'], "redirect after");.
+    drupal_set_message($form_state['redirect']);
+
+    if ($order->payment_method == 'paypal_wps') {
+      $wps_form = drupal_retrieve_form('uc_paypal_wps_form', $form_state, $order);
+      drupal_prepare_form('uc_paypal_wps_form', $wps_form, $form_state, $order);
+      $wps_url = $wps_form['#action'] . '?';
+      foreach (element_children($wps_form) as $key) {
+        if (isset($wps_form[$key]['#value'])) {
+          $wps_url .= urlencode($key) . '=' . urlencode($wps_form[$key]['#value']) . '&';
+        }
+      }
+      $wps_url = trim($wps_url, '&');
+      drupal_goto($wps_url);
+    }
+    else {
+      $form_state['values']['op'] = t('Submit order');
+      $form_state['uc_order'] = $order;
+
+      $uc_credit_enabled = module_exists('uc_credit');
+
+      // c.f. http://drupal.org/node/1519042
+      if ($uc_credit_enabled && isset($_SESSION['sescrd'])) {
+        $_POST['sescrd'] = base64_encode($_SESSION['sescrd']);
+      }
+
+      drupal_form_submit($submit_form, $form_state);
+
+      // Ensure that if the checkout fails we don't get redirected to the
+      // review page.
+      if ($uc_credit_enabled && $form_state['redirect'] == $form_state['storage']['base_path'] . '/checkout/review') {
+        // @see uc_credit_form_uc_cart_checkout_review_form_alter().
+        // Send them back to the checkout form to put in their details again.
+        drupal_set_message(t('To protect our customers from identity theft, credit card details are erased when a browser refreshes on the checkout page.  Please enter your card details again and re-submit the form.'), 'error');
+        $_SESSION['clear_cc'] = TRUE;
+        unset($_SESSION['cc_pay']);
+        $form_state['redirect'] = $form_state['storage']['base_path'] . '/checkout';
+      }
+
+      $form_state['programmed'] = FALSE;
+    }
+  }
+}
+
+/**
+ * Implements hook_uc_invoice_templates().
+ */
+function tweaks_uc_invoice_templates() {
+  return array('customer2', 'customer3', 'customer4');
+}
+
+/**
+ * Displays an order invoice.
+ */
+function tweaks_view_invoice($order, $template, $print = FALSE) {
+  $build = array(
+    '#theme' => 'uc_order',
+    '#order' => $order,
+    '#op' => $print ? 'print' : 'view',
+    '#template' => $template,
+  );
+
+  if ($print) {
+    drupal_add_http_header('Content-Type', 'text/html; charset=utf-8');
+    print theme('uc_order_invoice_page', array('content' => drupal_render($build)));
+    exit();
+  }
+
+  return $build;
+}
+
+/**
+ * Implements hook_init().
+ * 
+ *  Redirect certian urls for logged-in users to the studio console.
+ */
+function tweaks_init() {
+  global $user;
+
+  if ($_GET['q'] == 'studio/register' and $_SERVER['SCRIPT_NAME'] == '/index.php' and $user->uid) {
+    // dpm($user, "do redirect");.
+    drupal_goto('studio/console');
+  }
+
+  if ($_GET['q'] == 'studio' and $_SERVER['SCRIPT_NAME'] == '/index.php' and $user->uid) {
+    // dpm($user, "do redirect");.
+    drupal_goto('studio/console');
+  }
+}

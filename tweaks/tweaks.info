@@ -1,0 +1,7 @@
+name = Tweaks
+description = Custom tweaks for Drupal 7.
+core = 7.x
+
+dependencies[] = balance_tracker
+dependencies[] = ubercart
+dependencies[] = uc_optional_checkout_review
