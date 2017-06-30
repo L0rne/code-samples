@@ -1,0 +1,459 @@
+<?php
+
+/**
+ * @file
+ * Change password stuff adaped from https://www.drupal.org/sandbox/clivelinsell/1608766.
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function wpf_dashboard_menu() {
+
+  $items = array();
+
+  $items['admin/store/orders/%uc_order/ticket/save'] = array(
+    'page callback' => 'wpf_dashboard_ticket_save',
+    'page arguments' => array(3),
+    'access arguments' => array('View all orders'),
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['admin/store/orders/%uc_order/ticket'] = array(
+    'title' => 'Order Ticket',
+    'description' => 'Order Ticket.',
+    'page callback' => 'wpf_dashboard_view_invoice',
+  // Refers to the template file, uc-order--ticket.tpl.php.
+    'page arguments' => array(3, "ticket"),
+    'access arguments' => array('View all orders'),
+  );
+
+  $items['admin/store/orders/%uc_order/ticket2'] = array(
+    'title' => 'Order Ticket',
+    'description' => 'Order Ticket.',
+    'page callback' => 'wpf_dashboard_view_invoice',
+  // Refers to the template file, uc-order--ticket2.tpl.php.
+    'page arguments' => array(3, "ticket2"),
+    'access arguments' => array('View all orders'),
+  );
+
+  $items['admin/store/orders/%uc_order/ticket/print'] = array(
+    'title' => 'Order Ticket',
+    'description' => 'Order Ticket.',
+    'page callback' => 'wpf_dashboard_view_invoice',
+  // Refers to the template file, uc-order--ticket.tpl.php.
+    'page arguments' => array(3, "ticket", TRUE),
+    'access arguments' => array('View all orders'),
+  );
+
+  $items['admin/store/orders/%uc_order/ticket2/print'] = array(
+    'title' => 'Order Ticket',
+    'description' => 'Order Ticket.',
+    'page callback' => 'wpf_dashboard_view_invoice',
+  // Refers to the template file, uc-order--ticket2.tpl.php.
+    'page arguments' => array(3, "ticket2", TRUE),
+    'access arguments' => array('View all orders'),
+  );
+
+  $items['admin/store/orders/%uc_order/customer'] = array(
+    'title' => 'Customer Invoice',
+    'description' => 'Customer Invoice',
+    'page callback' => 'wpf_dashboard_view_invoice',
+  // Refers to the template file, uc-order--customer.tpl.php.
+    'page arguments' => array(3, "customer", FALSE),
+    'access arguments' => array('View all orders'),
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_form_alter().
+ */
+function wpf_dashboard_form_alter(&$form, &$form_state, $form_id) {
+  // dpm($form_id, "form_id");
+  // dpm($form, "form");
+  // dpm($form_state, "form_state from tweaks_form_alter - $form_id");
+  // dpm($form, "form from twpf_dashboard_form_alter - $form_id");.
+  if ($form_id == "uc_addresses_get_address_form") {
+    // dpm($form, "form from twpf_dashboard_form_alter - $form_id");
+    // dpm($form['cancel']['#markup']);
+    // dpm($_GET, "GET");.
+    if ($_GET['destination'] == "user-dashboard") {
+      // unset($form['cancel']['#markup']);.
+      $form['cancel']['#markup'] = '<a href="/user-dashboard" class="address-link cancel-address-link">Cancel</a>';
+    }
+
+  }
+}
+
+/**
+ * Implements hook_block_info().
+ */
+function wpf_dashboard_block_info() {
+  return array(
+    'wpf_dashboard_password_form' => array(
+      'info' => t('Change Password Form'),
+    ),
+    'wpf_dashboard_address_block' => array(
+      'info' => t('Address Book Block'),
+    ),
+    'wpf_dashboard_account_form' => array(
+      'info' => t('Change Account Detials'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_block_view().
+ */
+function wpf_dashboard_block_view($delta = '') {
+  $block = array();
+  // Only show the block for a logged-in user.
+  if ($delta == 'wpf_dashboard_password_form' && user_is_logged_in()) {
+    $block['subject'] = t('Change Password');
+    $block['content'] = drupal_get_form('wpf_dashboard_password_form');
+  }
+  if ($delta == 'wpf_dashboard_address_block' && user_is_logged_in()) {
+    $block['subject'] = t('Change Address');
+    // $address_user = $GLOBALS['user'];.
+    global $user;
+    $address_user = $user;
+    module_load_include('inc', 'uc_addresses', 'uc_addresses.pages');
+    // $block['content'] = uc_addresses_address_book($address_user);
+    $block['content'] = wpf_dashboard_address_book($address_user);
+
+  }
+  if ($delta == 'wpf_dashboard_account_form' && user_is_logged_in()) {
+    $block['subject'] = t('Change Account Detials');
+    $block['content'] = drupal_get_form('wpf_dashboard_account_form');
+  }
+  return $block;
+}
+
+/**
+ * Password change form.
+ */
+function wpf_dashboard_password_form($form, &$form_state) {
+  // Sanity check.
+  if (user_is_anonymous()) {
+    // Or drupal_access_denied()?
+    return $form;
+  }
+
+  // Get the currently logged in user object.
+  $form['#account'] = $GLOBALS['user'];
+
+  // Textfield cor current password confirmation.
+  $form['current_pass'] = array(
+    '#type' => 'password',
+    '#title' => t('Current password'),
+    '#size' => 25,
+    '#required' => TRUE,
+  );
+
+  // Password confirm field.
+  $form['account']['pass'] = array(
+    '#type' => 'password_confirm',
+    '#size' => 25,
+    '#title' => t('New Password'),
+    '#required' => TRUE,
+  );
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Submit'),
+  );
+
+  return $form;
+}
+
+/**
+ * Validate handler for change_password_form().
+ */
+function wpf_dashboard_password_form_validate(&$form, &$form_state) {
+  // Make sure the password functions are present.
+  require_once DRUPAL_ROOT . '/' . variable_get('password_inc', 'includes/password.inc');
+
+  // Make sure the provided current password is valid for this account.
+  if (!user_check_password($form_state['values']['current_pass'], $form['#account'])) {
+    form_set_error('current_pass', t('The current password you provided is incorrect.'));
+  }
+}
+
+/**
+ * Submit handler for change_password_form().
+ */
+function wpf_dashboard_password_form_submit(&$form, &$form_state) {
+  // Set up the edit array to pass to user_save()
+  $edit = array('pass' => $form_state['values']['pass']);
+
+  // Save the account with the new password.
+  user_save($form['#account'], $edit);
+
+  // Inform the user.
+  drupal_set_message(t('Your password has been changed.'));
+}
+
+/**
+ * Generates a list of all addresses owned by a single user.
+ *
+ * This address list is themed for display.
+ *
+ * If the current user is allowed to edit the addresses, then an edit link for
+ * each address will be provided.
+ *
+ * @param object $address_user
+ *   The user whose address book we want to display.
+ *
+ * @return string
+ *   The themed address book.
+ */
+
+/**
+ * This a modified copy of uc_addresses_address_book.
+ */
+function wpf_dashboard_address_book($address_user) {
+  drupal_add_css(drupal_get_path('module', 'uc_addresses') . '/uc_addresses.css');
+  // drupal_set_title(t('Address book'));
+  // Initialize addresses array used for in the template.
+  $addresses = array();
+  try {
+    // Get all addresses for address user.
+    $address_book = UcAddressesAddressBook::get($address_user);
+    $all_addresses = $address_book->getAddresses();
+    // dpm($address_user, "address_user");
+    // dpm($address_book, "address_book");
+    // dpm($all_addresses, "all addresses");.
+    if (count($all_addresses) > 0) {
+      // Check for each address if the user may view it.
+      foreach ($all_addresses as $address) {
+        if (isset($address->rdf_mapping)) {
+          $address_output = uc_addresses_list_one_address($address_user, $address);
+          if ($address_output) {
+            $addresses[$address->getId()] = $address_output;
+          }
+        }
+
+      }
+    }
+  }
+  catch (Exception $e) {
+    drupal_set_message($e->getMessage(), 'error');
+  }
+
+  $options = array();
+  // Check if user may add addresses.
+  if (UcAddressesPermissions::canEditAddress($address_user)) {
+    // Show add link.
+    $options['add_link'] = TRUE;
+  }
+
+  return theme('uc_addresses_address_book', array('addresses' => $addresses, 'address_book' => $address_book, 'options' => $options));
+}
+
+/**
+ * Account change form.
+ */
+function wpf_dashboard_account_form($form, &$form_state) {
+  // Sanity check.
+  if (user_is_anonymous()) {
+    // Or drupal_access_denied()?
+    return $form;
+  }
+
+  // Get the currently logged in user object.
+  $form['#account'] = $GLOBALS['user'];
+  // dpm($form['#account'], "account");
+  // Name.
+  $form['account']['name'] = array(
+    '#type' => 'textfield',
+    '#maxlength' => 60,
+    '#title' => t('Display name'),
+    '#description' => t('Spaces are allowed; punctuation is not allowed except for periods, hyphens, apostrophes, and underscores.'),
+    '#required' => TRUE,
+    '#default_value' => $form['#account']->name,
+  );
+
+  // Mail.
+  $form['account']['mail'] = array(
+    '#type' => 'textfield',
+    '#maxlength' => 254,
+    '#title' => t('E-mail address'),
+    '#description' => t('A valid e-mail address. All e-mails from the system will be sent to this address. The e-mail address is not made public and will only be used if you wish to receive a new password or wish to receive certain news or notifications by e-mail.'),
+    '#required' => TRUE,
+    '#default_value' => $form['#account']->mail,
+  );
+
+  // Textfield for current password confirmation.
+  $form['current_pass'] = array(
+    '#type' => 'password',
+    '#title' => t('Current password'),
+    '#size' => 25,
+    '#required' => TRUE,
+  );
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Submit'),
+  );
+
+  return $form;
+}
+
+/**
+ * Validate handler for change_password_form().
+ */
+function wpf_dashboard_account_form_validate(&$form, &$form_state) {
+  $account = $form['#user'];
+
+  // Validate new or changing username.
+  if (isset($form_state['values']['name'])) {
+    if ($error = user_validate_name($form_state['values']['name'])) {
+      form_set_error('name', $error);
+    }
+    elseif ((bool) db_select('users')->fields('users', array('uid'))->condition('uid', $account->uid, '<>')->condition('name', db_like($form_state['values']['name']), 'LIKE')->range(0, 1)->execute()->fetchField()) {
+      form_set_error('name', t('The name %name is already taken.', array('%name' => $form_state['values']['name'])));
+    }
+  }
+
+  // Trim whitespace from mail, to prevent confusing 'e-mail not valid'
+  // warnings often caused by cutting and pasting.
+  $mail = trim($form_state['values']['mail']);
+  form_set_value($form['account']['mail'], $mail, $form_state);
+
+  // Validate the e-mail address, and check if it is taken by an existing user.
+  if ($error = user_validate_mail($form_state['values']['mail'])) {
+    form_set_error('mail', $error);
+  }
+  elseif ((bool) db_select('users')->fields('users', array('uid'))->condition('uid', $account->uid, '<>')->condition('mail', db_like($form_state['values']['mail']), 'LIKE')->range(0, 1)->execute()->fetchField()) {
+    // Format error message dependent on whether the user is logged in or not.
+    if ($GLOBALS['user']->uid) {
+      form_set_error('mail', t('The e-mail address %email is already taken.', array('%email' => $form_state['values']['mail'])));
+    }
+    else {
+      form_set_error('mail', t('The e-mail address %email is already registered. <a href="@password">Have you forgotten your password?</a>', array('%email' => $form_state['values']['mail'], '@password' => url('user/password'))));
+    }
+  }
+
+  // Make sure the password functions are present.
+  require_once DRUPAL_ROOT . '/' . variable_get('password_inc', 'includes/password.inc');
+
+  // Make sure the provided current password is valid for this account.
+  if (!user_check_password($form_state['values']['current_pass'], $form['#account'])) {
+    form_set_error('current_pass', t('The current password you provided is incorrect.'));
+  }
+}
+
+/**
+ * Submit handler for change_password_form().
+ */
+function wpf_dashboard_account_form_submit(&$form, &$form_state) {
+  // Set up the edit array to pass to user_save()
+  $edit = array('pass' => $form_state['values']['pass']);
+
+  $edit['name'] = $form_state['values']['name'];
+  $edit['mail'] = $form_state['values']['mail'];
+
+  // Save the account with the new password.
+  user_save($form['#account'], $edit);
+
+  // Inform the user.
+  drupal_set_message(t('Account changes have been saved.'));
+}
+
+/**
+ * Implements hook_uc_invoice_templates().
+ */
+function wpf_dashboard_uc_invoice_templates() {
+  return array('admin', 'customer', 'ticket', 'ticket2');
+}
+
+/**
+ * Displays an order invoice.
+ */
+function wpf_dashboard_view_invoice($order, $template, $print = TRUE) {
+  $print = TRUE;
+  if ($template == "customer") {
+    $print = FALSE;
+  }
+  // dpm($template, "template");
+  // dpm($print, "print");.
+  $build = array(
+    '#theme' => 'uc_order',
+    '#order' => $order,
+    '#op' => $print ? 'print' : 'view',
+    '#template' => $template,
+  );
+  // dpm($build, "build");.
+  if ($print) {
+    drupal_add_http_header('Content-Type', 'text/html; charset=utf-8');
+    // Refers to uc_order-invoice-page.tpl.php.
+    print theme('uc_order_invoice_page', array('content' => drupal_render($build)));
+    exit();
+  }
+
+  return $build;
+}
+
+/**
+ * Implements hook_admin_paths_alter().
+ *
+ * Prevents the Administration Theme from being used with certain paths.
+ */
+function wpf_dashboard_admin_paths_alter(&$paths) {
+  $paths['admin/store/orders/*/ticket/print'] = FALSE;
+  $paths['admin/store/orders/*/ticket'] = FALSE;
+  $paths['admin/store/orders/*/ticket2/print'] = FALSE;
+  $paths['admin/store/orders/*/ticket2'] = FALSE;
+  $paths['admin/store/orders/*/customer'] = FALSE;
+}
+
+/**
+ * Save edited ticket info to the db
+ */
+function wpf_dashboard_ticket_save($order) {
+  $order_number = $_POST['order_number'];
+
+  // dpm($order, "order");
+  // dpm($_POST, "POST");
+  // dpm($order->order_id, "order_id");
+  // dpm($_POST['job_number'], "job number");
+  // dpm($_POST['order_number'], "order number");.
+  $update = FALSE;
+  // Is this insert or update? Check for existing data.
+  $ticket_data = db_select('wpf_dashboard_ticket_data', 'ticket_data')
+    ->fields('ticket_data')
+    ->condition('oid', $order_number, '=')
+    ->execute()
+    ->fetchAssoc();
+
+  if (isset($ticket_data['oid'])) {
+    $update = TRUE;
+  }
+
+  // Build the fields array
+  // $fields = array('oid' => $_POST['order_number'],);.
+  $fields = array();
+  unset($_POST['order_number']);
+  foreach ($_POST as $field_name => $field_value) {
+    $fields[$field_name] = $field_value;
+  }
+
+  // dpm($fields, "fields");.
+  if ($update) {
+    $update_result = db_update('wpf_dashboard_ticket_data')
+      ->fields($fields)
+      ->condition('oid', $order_number, '=')
+      ->execute();
+  }
+  else {
+    $fields['oid'] = $order_number;
+    db_insert('wpf_dashboard_ticket_data')
+      ->fields($fields)
+      ->execute();
+  }
+
+  drupal_goto($_SERVER['HTTP_REFERER']);
+  // Return "done";.
+}

@@ -1,0 +1,6 @@
+name = WPF Dashboard
+description = Dashboard for Wholesale Pocket Folders
+core = 7.x
+dependencies[] = views
+dependencies[] = uc_cart
+dependencies[] = uc_addresses
